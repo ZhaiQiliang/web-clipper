@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web Clipper</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Main View -->
+    <div id="mainView" class="view">
+      <header class="header">
+        <h1>Web Clipper</h1>
+        <button id="settingsBtn" class="icon-btn" title="Settings">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </header>
+
+      <div id="status" class="status">Ready to clip</div>
+
+      <!-- Clip Mode Toggle -->
+      <div class="clip-mode-toggle">
+        <button id="modeFullPage" class="mode-btn active" title="Clip entire article">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+          </svg>
+          <span>Full Page</span>
+        </button>
+        <button id="modeSelection" class="mode-btn" title="Clip selected text" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+          </svg>
+          <span>Selection</span>
+        </button>
+      </div>
+
+      <div id="selectionInfo" class="selection-info hidden">
+        <span class="selection-icon">✓</span>
+        <span>Selected text detected</span>
+      </div>
+
+      <!-- Title Input -->
+      <div class="form-group">
+        <label for="titleInput">Title:</label>
+        <input type="text" id="titleInput" placeholder="Page title (auto-filled)">
+      </div>
+
+      <!-- Preview Area -->
+      <div id="preview" class="preview hidden">
+        <div class="preview-title" id="previewTitle"></div>
+        <div class="preview-excerpt" id="previewExcerpt"></div>
+        <div class="preview-meta">
+          <span id="previewSite"></span>
+        </div>
+      </div>
+
+      <!-- Image Progress -->
+      <div id="imageProgress" class="image-progress hidden">
+        <div class="progress-header">
+          <span id="progressLabel">Downloading images...</span>
+          <span id="progressCount">0/0</span>
+        </div>
+        <div class="progress-bar">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <div id="progressStats" class="progress-stats hidden">
+          <span class="stats-success" id="statsSuccess">0 saved</span>
+          <span class="stats-failed" id="statsFailed">0 failed</span>
+        </div>
+      </div>
+
+      <!-- Folder Input -->
+      <div class="form-group">
+        <label for="folderInput">Save to folder:</label>
+        <input type="text" id="folderInput" placeholder="Clippings">
+      </div>
+
+      <!-- Tags Input -->
+      <div class="form-group">
+        <div class="label-with-action">
+          <label for="tagsInput">Tags:</label>
+          <button id="manageTagsBtn" class="text-btn" title="Manage tags">Manage</button>
+        </div>
+        <div class="tags-input-wrapper">
+          <div class="tags-container" id="tagsContainer"></div>
+          <input type="text" id="tagsInput" placeholder="Add tags..." autocomplete="off">
+          <div class="tags-suggestions hidden" id="tagsSuggestions"></div>
+        </div>
+      </div>
+
+      <!-- Notes Input -->
+      <div class="form-group">
+        <label for="notesInput">Notes (optional):</label>
+        <textarea id="notesInput" placeholder="Add your notes here..." rows="3"></textarea>
+      </div>
+
+      <!-- Clip Button -->
+      <button id="clipBtn" class="btn btn-primary">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+          <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+        </svg>
+        <span>Clip this page</span>
+      </button>
+    </div>
+
+    <!-- Tags Management View -->
+    <div id="tagsManageView" class="view hidden">
+      <header class="header">
+        <button id="tagsBackBtn" class="icon-btn" title="Back">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 12H5M12 19l-7-7 7-7"></path>
+          </svg>
+        </button>
+        <h1>Manage Tags</h1>
+        <button id="clearAllTagsBtn" class="icon-btn" title="Clear all tags">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+        </button>
+      </header>
+
+      <div class="tags-stats">
+        <span id="tagsCount">0 tags</span>
+        <span class="tags-stats-separator">|</span>
+        <span id="totalUsage">0 total uses</span>
+      </div>
+
+      <div id="tagsList" class="tags-list">
+        <!-- Tags will be rendered here -->
+      </div>
+
+      <div class="tags-actions">
+        <button id="exportTagsBtn" class="btn btn-secondary btn-small">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span>Export</span>
+        </button>
+        <button id="importTagsBtn" class="btn btn-secondary btn-small">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+          <span>Import</span>
+        </button>
+        <input type="file" id="importTagsFile" accept=".json" style="display: none;">
+      </div>
+    </div>
+
+    <!-- Settings View -->
+    <div id="settingsView" class="view hidden">
+      <header class="header">
+        <button id="backBtn" class="icon-btn" title="Back">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 12H5M12 19l-7-7 7-7"></path>
+          </svg>
+        </button>
+        <h1>Settings</h1>
+        <div style="width:32px"></div>
+      </header>
+
+      <form id="settingsForm">
+        <div class="form-group">
+          <label for="apiUrl">Obsidian API URL</label>
+          <input type="url" id="apiUrl" placeholder="http://localhost:27123">
+        </div>
+
+        <div class="form-group">
+          <label for="apiKey">API Key (optional)</label>
+          <input type="password" id="apiKey" placeholder="Enter API key if required">
+        </div>
+
+        <div class="form-group">
+          <label for="targetFolder">Default Folder</label>
+          <input type="text" id="targetFolder" placeholder="Clippings">
+        </div>
+
+        <div class="form-group checkbox">
+          <input type="checkbox" id="includeMetadata" checked>
+          <label for="includeMetadata">Include YAML frontmatter</label>
+        </div>
+
+        <div class="form-group checkbox">
+          <input type="checkbox" id="localizeImages" checked>
+          <label for="localizeImages">Download images locally</label>
+        </div>
+
+        <div class="connection-test">
+          <button type="button" id="testConnectionBtn" class="btn btn-secondary">Test Connection</button>
+          <div id="connectionStatus" class="connection-status"></div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save Settings</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="../shared/constants.js"></script>
+  <script src="../shared/utils.js"></script>
+  <script src="../lib/turndown.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

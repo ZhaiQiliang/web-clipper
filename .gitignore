@@ -1,2 +1,7 @@
 ._*
 .DS_Store
+node_modules/
+*.log
+AGENTS.md
+CLAUDE.md
+test.md

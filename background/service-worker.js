@@ -170,10 +170,10 @@ async function handleSaveToObsidian(note, settings) {
     return { success: true, path: filePath };
   } catch (error) {
     if (error.name === 'AbortError') {
-      throw new Error('Request timed out. Please check your connection.');
+      throw new Error('Request timed out. Please check your connection.', { cause: error });
     }
     if (error.name === 'TypeError') {
-      throw new Error(CONFIG.ERRORS.CONNECTION_FAILED);
+      throw new Error(CONFIG.ERRORS.CONNECTION_FAILED, { cause: error });
     }
     throw error;
   }

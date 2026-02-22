@@ -132,11 +132,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (state.clipMode === 'selection') {
         state.clipMode = 'fullPage';
         updateModeButtons();
+      }
     }
   }
-
-  return result;
-}
 
   // Update mode button styles
   function updateModeButtons() {

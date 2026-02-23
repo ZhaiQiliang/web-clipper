@@ -79,9 +79,57 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'downloadSingleImage') {
     const { image, settings, noteFilename } = message;
     const attachmentsFolder = `${settings.targetFolder}/${CONFIG.IMAGES.ATTACHMENTS_FOLDER}`;
-    downloadAndUploadImage(image, attachmentsFolder, noteFilename, settings.apiUrl, settings.apiKey)
+    
+    // If image has base64 data, save directly without fetching
+    if (image.base64) {
+      saveBase64Image(image, attachmentsFolder, noteFilename, settings.apiUrl, settings.apiKey)
+        .then(result => sendResponse(result))
+        .catch(error => sendResponse({ success: false, error: error.message, originalSrc: image.originalSrc }));
+    } else {
+      downloadAndUploadImage(image, attachmentsFolder, noteFilename, settings.apiUrl, settings.apiKey)
+        .then(result => sendResponse(result))
+        .catch(error => sendResponse({ success: false, error: error.message, originalSrc: image.originalSrc }));
+    }
+    return true;
+  }
+
+  // Convert images to base64 using background script (bypasses CORS)
+  if (message.action === 'convertImagesInBackground') {
+    handleConvertImagesToBase64(message.imageUrls, message.sourceUrl)
       .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, error: error.message, originalSrc: image.originalSrc }));
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  // Fetch image with cookies for Reader Mode
+  if (message.action === 'fetchImageWithCookies') {
+    fetchImageWithCookies(message.imageUrl)
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  // Store images in IndexedDB
+  if (message.action === 'storeImages') {
+    handleStoreImages(message.images, message.imageKey)
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  // Get all images from IndexedDB
+  if (message.action === 'getImages') {
+    handleGetImages()
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  // Clear old images from IndexedDB
+  if (message.action === 'clearImages') {
+    handleClearImages()
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
   }
 
@@ -388,6 +436,54 @@ async function downloadAndUploadImage(image, attachmentsFolder, noteFilename, ap
   }
 }
 
+// Save base64 image directly to Obsidian (no need to fetch)
+async function saveBase64Image(image, attachmentsFolder, noteFilename, apiUrl, apiKey) {
+  try {
+    // Decode base64 to binary
+    const base64Data = image.base64.replace(/^data:image\/\w+;base64,/, '');
+    const binaryString = atob(base64Data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    // Detect image type from base64 header
+    let contentType = 'image/png';
+    if (image.base64.startsWith('data:image/jpeg')) {
+      contentType = 'image/jpeg';
+    } else if (image.base64.startsWith('data:image/webp')) {
+      contentType = 'image/webp';
+    } else if (image.base64.startsWith('data:image/gif')) {
+      contentType = 'image/gif';
+    }
+    
+    // Generate filename
+    const ext = getExtensionFromMimeType(contentType);
+    const safeNoteFilename = sanitizeFilename(noteFilename).substring(0, 50);
+    const filename = `${safeNoteFilename}_${image.index}${ext}`;
+    const filePath = `${attachmentsFolder}/${filename}`;
+    
+    // Upload to Obsidian
+    const arrayBuffer = bytes.buffer;
+    await uploadBinaryToObsidian(filePath, arrayBuffer, contentType, apiUrl, apiKey);
+    
+    return {
+      originalSrc: image.originalSrc,
+      localPath: filePath,
+      relativePath: `${CONFIG.IMAGES.ATTACHMENTS_FOLDER}/${filename}`,
+      success: true
+    };
+  } catch (error) {
+    return {
+      originalSrc: image.originalSrc,
+      localPath: null,
+      relativePath: null,
+      success: false,
+      error: error.message
+    };
+  }
+}
+
 // Upload binary data to Obsidian vault
 async function uploadBinaryToObsidian(filePath, data, contentType, apiUrl, apiKey) {
   const encodedPath = filePath.split('/').map(segment => encodeURIComponent(segment)).join('/');
@@ -410,3 +506,242 @@ async function uploadBinaryToObsidian(filePath, data, contentType, apiUrl, apiKe
 }
 
 // getExtensionFromMimeType and chunkArray are now in shared/utils.js
+
+
+
+// Convert images to base64 (for reader mode - bypasses CORS)
+async function handleConvertImagesToBase64(imageUrls, sourceUrl) {
+  const results = [];
+  const timeout = 15000; // 15 seconds per image
+  
+  // Extract domain from source URL for Referer and cookies
+  let referer = sourceUrl || 'https://sspai.com/';
+  let sourceDomain = 'sspai.com';
+  try {
+    const sourceUrlObj = new URL(sourceUrl);
+    sourceDomain = sourceUrlObj.hostname;
+  } catch (e) {}
+  
+  console.log('[Background] Converting images, sourceUrl:', sourceUrl, 'domain:', sourceDomain);
+  
+  for (const url of imageUrls) {
+    try {
+      // Get the domain from the image URL
+      const imgUrlObj = new URL(url);
+      const imgDomain = imgUrlObj.hostname;
+      
+      // Get cookies for both the image domain and the source domain
+      // (cookies might be set on parent domain, not CDN subdomain)
+      const allCookies = [];
+      const imgDomainCookies = await chrome.cookies.getAll({ domain: imgDomain });
+      const sourceDomainCookies = await chrome.cookies.getAll({ domain: sourceDomain });
+      
+      // Combine and deduplicate cookies
+      const cookieMap = new Map();
+      for (const c of [...imgDomainCookies, ...sourceDomainCookies]) {
+        cookieMap.set(c.name, c.value);
+      }
+      const cookieHeader = Array.from(cookieMap.entries())
+        .map(([name, value]) => `${name}=${value}`)
+        .join('; ');
+      
+      console.log('[Background] Fetching image:', url.substring(0, 50), 'cookies:', cookieHeader ? 'yes' : 'none');
+      
+      let response;
+      try {
+        response = await fetchWithTimeout(url, {
+          method: 'GET',
+          mode: 'cors',
+          headers: {
+            'Cookie': cookieHeader,
+            'Referer': referer,
+            'Origin': `https://${sourceDomain}`,
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/png,image/jpeg,image/gif,*/*'
+          }
+        }, timeout);
+        
+        if (!response.ok) {
+          console.log('[Background] Request failed with status:', response.status);
+          throw new Error('HTTP ' + response.status);
+        }
+      } catch (fetchError) {
+        console.log('[Background] Fetch error:', fetchError.message);
+        // Try no-cors as fallback
+        response = await fetchWithTimeout(url, {
+          method: 'GET',
+          mode: 'no-cors',
+          headers: {
+            'Cookie': cookieHeader,
+            'Referer': referer,
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          }
+        }, timeout);
+      }
+      
+      // Get the blob
+      const blob = await response.blob();
+      console.log('[Background] Got blob, size:', blob.size, 'type:', blob.type);
+      
+      // Validate it's an image
+      if (blob.type && !blob.type.startsWith('image/')) {
+        results.push({ url: url, base64: null, error: `Not an image: ${blob.type}` });
+        continue;
+      }
+      
+      const base64 = await blobToBase64(blob);
+      results.push({ url: url, base64: base64 });
+      console.log('[Background] Successfully converted:', url.substring(0, 50));
+    } catch (e) {
+      console.log('[Background] Failed to convert:', url.substring(0, 50), e.message);
+      results.push({ url: url, base64: null, error: e.message });
+    }
+  }
+  
+  return { success: true, results };
+}
+
+// Convert blob to base64
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Fetch a single image with cookies (for Reader Mode)
+async function fetchImageWithCookies(imageUrl) {
+  try {
+    const url = new URL(imageUrl);
+    const imgDomain = url.hostname;
+    
+    // Get the current page URL for source domain
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    let sourceDomain = imgDomain;
+    let sourceUrl = '';
+    if (tab?.url) {
+      try {
+        const tabUrl = new URL(tab.url);
+        sourceDomain = tabUrl.hostname;
+        sourceUrl = tab.url;
+      } catch (e) {}
+    }
+    
+    // Get cookies for multiple possible domains
+    // 1. Exact image domain
+    // 2. Exact source domain  
+    // 3. Parent domains (e.g., .sspai.com for cdnfile.sspai.com)
+    const allCookies = [];
+    
+    // Get cookies for exact domains
+    const imgDomainCookies = await chrome.cookies.getAll({ domain: imgDomain });
+    const sourceDomainCookies = await chrome.cookies.getAll({ domain: sourceDomain });
+    allCookies.push(...imgDomainCookies, ...sourceDomainCookies);
+    
+    // Get cookies for parent domains
+    const domainParts = imgDomain.split('.');
+    if (domainParts.length > 2) {
+      // Try .example.com for cdn.example.com
+      const parentDomain = '.' + domainParts.slice(-2).join('.');
+      const parentCookies = await chrome.cookies.getAll({ domain: parentDomain });
+      allCookies.push(...parentCookies);
+    }
+    
+    // Also try getting ALL cookies for the tab's URL
+    if (tab?.url) {
+      const tabUrl = new URL(tab.url);
+      const tabCookies = await chrome.cookies.getAll({ url: tab.url });
+      allCookies.push(...tabCookies);
+    }
+    
+    // Combine and deduplicate cookies
+    const cookieMap = new Map();
+    for (const c of allCookies) {
+      // Only include non-httpOnly cookies (they can't be sent via headers)
+      if (!c.httpOnly) {
+        cookieMap.set(c.name, c.value);
+      }
+    }
+    const cookieHeader = Array.from(cookieMap.entries())
+      .map(([name, value]) => `${name}=${value}`)
+      .join('; ');
+    
+    // Build Referer (use the source page, not the image URL)
+    const referer = sourceUrl || `https://${sourceDomain}/`;
+    
+    console.log('[Background] fetchImageWithCookies:', imageUrl.substring(0, 80), 'sourceDomain:', sourceDomain, 'cookies:', cookieHeader ? 'yes (' + cookieMap.size + ')' : 'none');
+    
+    // Fetch with more complete headers
+    const response = await fetch(imageUrl, {
+      method: 'GET',
+      headers: {
+        'Cookie': cookieHeader,
+        'Referer': referer,
+        'Origin': `https://${sourceDomain}`,
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/png,image/jpeg,image/gif,*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Sec-Fetch-Dest': 'image',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'cross-site'
+      },
+      credentials: 'include',
+      mode: 'cors'
+    });
+    
+    if (!response.ok) {
+      console.log('[Background] fetchImageWithCookies failed:', response.status, response.statusText);
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    
+    const blob = await response.blob();
+    const base64 = await blobToBase64(blob);
+    
+    console.log('[Background] fetchImageWithCookies success:', imageUrl.substring(0, 50), 'base64 length:', base64.length);
+    
+    return { success: true, base64 };
+  } catch (error) {
+    console.log('[Background] fetchImageWithCookies error:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+// Handle storing images in IndexedDB
+async function handleStoreImages(images, imageKey) {
+  try {
+    for (const img of images) {
+      await saveImageToDB(img.url, img.base64);
+    }
+    console.log('[Background] Stored', images.length, 'images with key:', imageKey);
+    return { success: true, imageKey: imageKey, count: images.length };
+  } catch (error) {
+    console.log('[Background] Failed to store images:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+// Handle getting all images from IndexedDB
+async function handleGetImages() {
+  try {
+    const images = await getAllImagesFromDB();
+    console.log('[Background] Retrieved', Object.keys(images).length, 'images from IndexedDB');
+    return { success: true, images: images };
+  } catch (error) {
+    console.log('[Background] Failed to get images:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+// Handle clearing old images from IndexedDB
+async function handleClearImages() {
+  try {
+    const deletedCount = await clearOldImagesFromDB(24 * 60 * 60 * 1000); // 24 hours
+    console.log('[Background] Cleared', deletedCount, 'old images from IndexedDB');
+    return { success: true, deletedCount: deletedCount };
+  } catch (error) {
+    console.log('[Background] Failed to clear images:', error.message);
+    return { success: false, error: error.message };
+  }
+}

@@ -735,3 +735,94 @@ function replaceImageUrlsInFinalMarkdown(markdown, imageResults) {
 
   return result;
 }
+
+
+// Reader Mode - Open page in reader mode with base64 images
+async function openReaderMode() {
+  // Get status element directly since updateStatus is scoped inside DOMContentLoaded
+  const statusEl = document.getElementById('status');
+  const updateStatus = (message, type) => {
+    statusEl.textContent = message;
+    statusEl.className = 'status' + (type ? ' ' + type : '');
+  };
+  
+  try {
+    updateStatus('Opening Reader Mode...', 'loading');
+    
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) {
+      throw new Error('No active tab found');
+    }
+
+    // Extract content from the page
+    const extractResult = await sendMessageWithTimeout(tab.id, { action: 'extractContent' }, 10000);
+    
+    if (!extractResult.success) {
+      throw new Error(extractResult.error || 'Failed to extract content');
+    }
+
+    const content = extractResult.data;
+    let htmlContent = content.content || '';
+    
+    // Images are already converted to base64 in extractPageContent
+    // Just verify images exist in result
+    const images = content.images || [];
+    if (images.length > 0) {
+      updateStatus(`Content extracted with ${images.length} images`, 'loading');
+    }
+
+    // Prepare data for reader
+    const readerData = {
+      title: content.title || tab.title || 'Untitled',
+      url: content.url || tab.url,
+      content: htmlContent,
+      siteName: content.siteName,
+      byline: content.byline,
+      extractedAt: new Date().toISOString(),
+      imageKey: content.imageKey || null
+    };
+
+    // Generate unique key for storage
+    const contentKey = 'reader_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    
+    // Store in localStorage
+    const storageObj = {};
+    storageObj[contentKey] = readerData;
+    
+    await new Promise((resolve, reject) => {
+      chrome.storage.local.set(storageObj, () => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else {
+          resolve();
+        }
+      });
+    });
+
+    // Open reader.html with the content key
+    const readerUrl = chrome.runtime.getURL('reader/reader.html') + '?key=' + encodeURIComponent(contentKey);
+    
+    await chrome.tabs.create({ url: readerUrl });
+    
+    // Close popup
+    window.close();
+    
+  } catch (error) {
+    console.error('Reader Mode error:', error);
+    updateStatus('Error: ' + error.message, 'error');
+  }
+}
+
+// Event listeners for Reader Mode buttons
+document.addEventListener('DOMContentLoaded', () => {
+  const readerModeIconBtn = document.getElementById('readerModeBtn');
+  const readerModeLargeBtn = document.getElementById('readerModeLargeBtn');
+  
+  if (readerModeIconBtn) {
+    readerModeIconBtn.addEventListener('click', openReaderMode);
+  }
+  
+  if (readerModeLargeBtn) {
+    readerModeLargeBtn.addEventListener('click', openReaderMode);
+  }
+});

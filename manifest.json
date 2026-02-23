@@ -7,7 +7,14 @@
     "storage",
     "activeTab",
     "scripting",
-    "contextMenus"
+    "contextMenus",
+    "cookies"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["reader/reader.html", "reader/reader.js", "reader/reader.css"],
+      "matches": ["<all_urls>"]
+    }
   ],
   "commands": {
     "clip-page": {

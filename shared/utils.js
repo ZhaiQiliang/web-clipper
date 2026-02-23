@@ -116,3 +116,103 @@ function getExtensionFromMimeType(mimeType) {
   };
   return mimeToExt[mimeType] || '.png';
 }
+
+
+// IndexedDB helpers for image storage
+const DB_NAME = 'WebClipperImages';
+const DB_VERSION = 1;
+const STORE_NAME = 'images';
+
+function openImageDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    
+    request.onerror = () => reject(request.error);
+    
+    request.onsuccess = () => resolve(request.result);
+    
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        const store = db.createObjectStore(STORE_NAME, { keyPath: 'url' });
+        store.createIndex('timestamp', 'timestamp', { unique: false });
+      }
+    };
+  });
+}
+
+async function saveImageToDB(url, base64) {
+  const db = await openImageDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readwrite');
+    const store = transaction.objectStore(STORE_NAME);
+    
+    const request = store.put({
+      url: url,
+      base64: base64,
+      timestamp: Date.now()
+    });
+    
+    request.onsuccess = () => resolve(true);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function getImageFromDB(url) {
+  const db = await openImageDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.get(url);
+    
+    request.onsuccess = () => resolve(request.result?.base64 || null);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function getAllImagesFromDB() {
+  const db = await openImageDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.getAll();
+    
+    request.onsuccess = () => {
+      const results = request.result || [];
+      const imageMap = {};
+      results.forEach(item => {
+        imageMap[item.url] = item.base64;
+      });
+      resolve(imageMap);
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function clearOldImagesFromDB(maxAgeMs = 24 * 60 * 60 * 1000) {
+  const db = await openImageDB();
+  const cutoffTime = Date.now() - maxAgeMs;
+  
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readwrite');
+    const store = transaction.objectStore(STORE_NAME);
+    const index = store.index('timestamp');
+    
+    const range = IDBKeyRange.upperBound(cutoffTime);
+    const request = index.openCursor(range);
+    
+    let deletedCount = 0;
+    
+    request.onsuccess = (event) => {
+      const cursor = event.target.result;
+      if (cursor) {
+        cursor.delete();
+        deletedCount++;
+        cursor.continue();
+      }
+    };
+    
+    transaction.oncomplete = () => resolve(deletedCount);
+    transaction.onerror = () => reject(transaction.error);
+  });
+}

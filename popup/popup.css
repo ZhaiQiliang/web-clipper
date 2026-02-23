@@ -609,3 +609,8 @@ body {
 .btn-small svg {
   flex-shrink: 0;
 }
+
+/* Reader Mode Button */
+.reader-mode-btn {
+  margin-bottom: 8px;
+}

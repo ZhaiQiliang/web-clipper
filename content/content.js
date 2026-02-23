@@ -3,12 +3,9 @@
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'extractContent') {
-    try {
-      const result = extractPageContent();
-      sendResponse({ success: true, data: result });
-    } catch (error) {
-      sendResponse({ success: false, error: error.message });
-    }
+    extractPageContent()
+      .then(result => sendResponse({ success: true, data: result }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
   }
 
@@ -59,7 +56,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Only return true if we handle the message
 });
 
-function extractPageContent() {
+async function extractPageContent() {
   // Clone document to avoid modifying the original page
   const documentClone = document.cloneNode(true);
 
@@ -73,6 +70,7 @@ function extractPageContent() {
 
     if (article && article.content) {
       const images = extractImagesFromHtml(article.content);
+      const { imageKey, imagesWithBase64 } = await processAndStoreImages(images, article.content);
 
       return {
         title: article.title || document.title,
@@ -84,7 +82,8 @@ function extractPageContent() {
         siteName: article.siteName || getSiteName(),
         publishedTime: getPublishedTime(),
         extractedAt: new Date().toISOString(),
-        images: images
+        images: imagesWithBase64,
+        imageKey: imageKey
       };
     }
   }
@@ -92,6 +91,7 @@ function extractPageContent() {
   // Fallback: extract content with improved strategy
   const mainContent = getMainContent();
   const images = extractImagesFromHtml(mainContent);
+  const { imageKey, imagesWithBase64 } = await processAndStoreImages(images, mainContent);
 
   return {
     title: document.title,
@@ -103,7 +103,8 @@ function extractPageContent() {
     siteName: getSiteName(),
     publishedTime: getPublishedTime(),
     extractedAt: new Date().toISOString(),
-    images: images
+    images: imagesWithBase64,
+    imageKey: imageKey
   };
 }
 
@@ -296,3 +297,98 @@ function extractImagesFromHtml(htmlContent) {
 
   return images;
 }
+
+// Process images: convert to base64 and store in IndexedDB via background
+async function processAndStoreImages(images, htmlContent) {
+  if (!images || images.length === 0) {
+    return { imageKey: null, imagesWithBase64: [] };
+  }
+
+  // Generate unique key for this batch of images
+  const imageKey = 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
+  // Convert images to base64
+  const base64Images = [];
+  const imagesWithBase64 = [];
+  
+  for (const img of images) {
+    try {
+      const base64 = await convertImageToBase64(img.originalSrc);
+      if (base64) {
+        base64Images.push({
+          url: img.originalSrc,
+          base64: base64
+        });
+        // Add base64 to the image object for returning
+        imagesWithBase64.push({
+          ...img,
+          base64: base64,
+          success: true
+        });
+      } else {
+        imagesWithBase64.push({
+          ...img,
+          success: false
+        });
+      }
+    } catch (e) {
+      console.log('[Content] Failed to convert image:', img.originalSrc, e.message);
+      imagesWithBase64.push({
+        ...img,
+        success: false
+      });
+    }
+  }
+
+  if (base64Images.length === 0) {
+    return { imageKey: null, imagesWithBase64 };
+  }
+
+  // Send to background to store in IndexedDB
+  try {
+    await chrome.runtime.sendMessage({
+      action: 'storeImages',
+      images: base64Images,
+      imageKey: imageKey
+    });
+    console.log('[Content] Stored', base64Images.length, 'images with key:', imageKey);
+  } catch (e) {
+    console.log('[Content] Failed to store images:', e.message);
+  }
+
+  return { imageKey, imagesWithBase64 };
+}
+
+// Convert image URL to base64 using canvas
+function convertImageToBase64(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    
+    img.onload = function() {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        
+        const dataUrl = canvas.toDataURL('image/png');
+        resolve(dataUrl);
+      } catch (e) {
+        reject(e);
+      }
+    };
+    
+    img.onerror = function(e) {
+      reject(new Error('Failed to load image'));
+    };
+    
+    img.src = url;
+    
+    // Timeout after 10 seconds
+    setTimeout(() => reject(new Error('Image conversion timeout')), 10000);
+  });
+}
+
